@@ -1,13 +1,7 @@
 #!/usr/bin/python3
 
-# -----------------------------------------------------------------------------
-# TODO
-# - デバイスのサイズを調べてして書ききれるか確認する
-# -----------------------------------------------------------------------------
 
-
-MESSAGE = 'Error Block!!: This is my original error pattern'
-SECTOR_SIZE = 512
+DEFAULT_MESSAGE = 'Error Block!!: This is my original error pattern'
 
 
 import argparse 
@@ -34,29 +28,54 @@ def simple_timer(func):
 @simple_timer
 def main():
 
-    parser = argparse.ArgumentParser(description='Fill something with simple text message along block size')
-    parser.add_argument('target', help='Target device file')
+    parser = argparse.ArgumentParser(description='Fill a disk with a simple text message per sector. Filling a partition or a single file is not supported.')
+    parser.add_argument('target', help='Target device file. Please specify like /dev/sda')
     parser.add_argument('--blocksize', default=512, type=int, help='Block size used in dd command. Default=512')
+    parser.add_argument('--message', default=DEFAULT_MESSAGE, help='Message written to a sector. Default={}'.format(DEFAULT_MESSAGE))
     args = parser.parse_args()
 
 
-    spaces = SECTOR_SIZE - len(MESSAGE) 
-    
-    error_txt = MESSAGE
-    for i in range(spaces):
-        error_txt += ' '
-
-    q, r = divmod(args.blocksize, SECTOR_SIZE)
-    if r != 0:
-        print('Invalid parameter: input blocksize is not aligned to sector size{}'.format(SECTOR_SIZE))
+    disk_name = args.target.split('/')[-1]
+    if not disk_name in os.listdir('/sys/block'):
+        print('[Invalid parameter]: Disk name was not found under /sys/block. Please specify disk name as /dev/sda.')
         sys.exit()
 
-    error_block = ''
-    for i in range(q):
-        error_block += error_txt
+
+    with open('/sys/block/{}/queue/hw_sector_size'.format(disk_name)) as f:
+        sector_size = int( f.read().strip() )
+
+    with open('/sys/block/{}/size'.format(disk_name)) as g:
+        block_count = int( g.read().strip() )
 
 
-    cmd_1 = 'yes "{}"'.format(error_txt)
+    disk_size_in_byte = sector_size * block_count
+
+
+    if disk_size_in_byte % args.blocksize != 0:
+        print('[Invalid parameter]: Specified blocksize is not aligned to disk size.')
+        print('sector size = {}'.format(sector_size))
+        print('block count = {}'.format(block_count))
+        sys.exit()
+
+
+    spaces = sector_size - len(args.message) 
+    if spaces < 0:
+        print('[Invalid parameter]: Too long message. Specified messgae is longer than secotr size.')
+        sys.exit()
+
+
+    pattern_txt = args.message + ' ' * spaces
+
+    q, r = divmod(args.blocksize, sector_size)
+    if r != 0:
+        print('[Invalid parameter]: Specified blocksize is not aligned to sector size')
+        print('sector size = {}'.format(sector_size))
+        sys.exit()
+
+    pattern_block = pattern_txt * q   
+
+
+    cmd_1 = 'yes "{}"'.format(pattern_txt)
     cmd_2 = 'tr -d "\n"'
     cmd_3 = 'sudo dd of={} bs={} status=progress'.format(os.path.abspath(args.target), args.blocksize)
     
@@ -67,6 +86,9 @@ def main():
     process_3.wait()
 
     print('\nFilling has been done!!')
+
+
+
 
 if __name__ == '__main__':
     main()
